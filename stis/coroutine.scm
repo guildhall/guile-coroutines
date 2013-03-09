@@ -33,12 +33,22 @@
 	    define-coroutine-inited
 	    tagbody))
 
-(define return-stack (make-fluid '()))
 
-(define-syntax-parameter TAG
+(define-syntax-parameter RET
   (lambda (x) 
     (error 
      "TAG should be used in the transition part of with-coroutines")))
+
+(define-syntax-rule (with-ret code ...)
+  (let ((return-stack '()))
+    (syntax-parameterize ((RET (make-variable-transformer
+				  (lambda (x)
+					  (syntax-case x (set!)
+					    ((set! _ v) #'(set! return-stack v))
+					    ((_ . _) 
+					     (error "THUNK is not a funcition"))
+					    (_ #'return-stack))))))
+       code ...)))
 
 (define-syntax-parameter TAG
   (lambda (x) 
@@ -130,9 +140,6 @@
 	  #'(define-syntax nm
 	      (lambda (x) #''s)))))))
 
-
-
-
 (mk-exit goto-exit)
 (mk-exit gosub-exit)
 (mk-exit return-exit)
@@ -206,35 +213,39 @@
      (abort-to-prompt TAG transit-exit data ...))))
 
 (define-syntax-rule (with-coroutines ((nm thunk) ...) code ...)
+  (with-ret
   (with-coroutines-raw ((nm thunk
 			    ((goto-exit  
 			      ((g) (coroutine-reset) (g)))
 			     
 			     (gosub-exit
 			      ((g)
-			       (coroutine-cont)
-			       (fluid-set! return-stack
-					   (cons nm (fluid-ref return-stack)))
 			       (coroutine-reset)
+			       (set! RET
+				     (cons
+				      (lambda x 
+					(set! THUNK K)
+					(apply nm x)) 
+				      RET))
 			       (g)))
 			     
 			     (return-exit
 			      (x 
 			       (coroutine-reset)
-			       (let ((gs (fluid-ref return-stack)))
+			       (let ((gs RET))
 				 (if (pair? gs)
 				     (let ((g (car gs)))
-				       (fluid-set! return-stack (cdr gs))
+				       (set! RET (cdr gs))
 				       (apply g x))
 				     (error "return-stack is empty")))))
 
 			     (return-exit
 			      (x 
 			       (coroutine-cont)
-			       (let ((gs (fluid-ref return-stack)))
+			       (let ((gs RET))
 				 (if (pair? gs)
 				     (let ((g (car gs)))
-				       (fluid-set! return-stack (cdr gs))
+				       (set! RET (cdr gs))
 				       (apply g x))
 				     (error "return-stack is empty")))))
 
@@ -250,7 +261,7 @@
 			     (transit-exit
 			      (x   (coroutine-cont) (apply values x)))))
 			...)
-       code ...))
+       code ...)))
 
 (define-syntax-rule (feed g x ...) (g (list x ...)))
 (define-syntax-rule (with-feed (q) code ...) (let ((q '())) code ...))
