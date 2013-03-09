@@ -3,7 +3,10 @@
   #:export (with-coroutines-raw 
 	    with-coroutines
 	    goto
+	    goto-from
+
 	    gosub
+	    gosub-from
 
 	    return
 	    return-from
@@ -15,6 +18,7 @@
 	    yield-from
 
 	    continue
+	    continue-from
 
 	    consume 	   
 	    consume-from
@@ -211,6 +215,7 @@
 			       (coroutine-cont)
 			       (fluid-set! return-stack
 					   (cons nm (fluid-ref return-stack)))
+			       (coroutine-reset)
 			       (g)))
 			     
 			     (return-exit
