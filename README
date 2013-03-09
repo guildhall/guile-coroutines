@@ -1,0 +1,7 @@
+Make sure to put this directory in guiles load path.
+
+then use the library by issueing
+
+   (use-modules (stis coroutine))
+
+For examples lock in stis/coroutine directory for example code in eg. test.scm.
