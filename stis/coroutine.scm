@@ -5,7 +5,7 @@
 	    
 	    goto
 	    goto-from
-
+	    
 	    gosub
 	    gosub-from
 
@@ -18,8 +18,14 @@
 	    yield
 	    yield-from
 
+	    leave
+	    leave-from
+
 	    continue
 	    continue-from
+
+	    continue-sub
+	    continue-sub-from
 
 	    consume 	   
 	    consume-from
@@ -150,20 +156,35 @@
 (mk-exit return-exit)
 (mk-exit resume-exit)
 (mk-exit yield-exit)
+(mk-exit leave-exit)
 (mk-exit continue-exit)
+(mk-exit continue-sub-exit)
 (mk-exit consume-exit)
 (mk-exit transit-exit)
 
+;; GOTO
 (define-syntax-rule (goto g . l)      
   (g ref-g abort-to-prompt goto-exit . l))
 (define-syntax-rule (goto-from h g . l)      
   (h ref-gg g abort-to-prompt goto-exit . l))
 
-(define-syntax-rule (gosub g)     
-  (g ref-g abort-to-prompt gosub-exit))
-(define-syntax-rule (gosub-from h g)     
-  (h ref-gg g abort-to-prompt gosub-exit))
+(define-syntax-rule (continue g . l)  
+  (g ref-g abort-to-prompt continue-exit . l))
+(define-syntax-rule (continue-from h g . l)  
+  (h ref-gg g abort-to-prompt continue-exit . l))
 
+;; GOSUB
+(define-syntax-rule (gosub g . l)     
+  (g ref-g abort-to-prompt gosub-exit . l))
+(define-syntax-rule (gosub-from h g . l)     
+  (h ref-gg g abort-to-prompt gosub-exit . l))
+
+(define-syntax-rule (continue-sub g . l)  
+  (g ref-g abort-to-prompt continue-sub-exit . l))
+(define-syntax-rule (continue-sub-from h g . l)  
+  (h ref-gg g abort-to-prompt continue-sub-exit . l))
+
+;; RETURN
 (define-syntax-rule (return . l)  (abort-to-prompt TAG return-exit . l))
 (define-syntax-rule (return-from g . l)  
   (g ref-g abort-to-prompt TAG return-from-exit . l))
@@ -172,15 +193,16 @@
 (define-syntax-rule (resume-from g . l)  
   (g ref-g abort-to-prompt resume-exit . l))
 
+;; YIELD
 (define-syntax-rule (yield x ...) (abort-to-prompt TAG yield-exit x ...))
 (define-syntax-rule (yield-from g x ...) 
   (g ref-g abort-to-prompt yield-exit x ...))
 
-(define-syntax-rule (continue g . l)  
-  (g ref-g abort-to-prompt continue-exit . l))
-(define-syntax-rule (continue-from h g . l)  
-  (h ref-gg h abort-to-prompt continue-exit . l))
+(define-syntax-rule (leave x ...) (abort-to-prompt TAG leave-exit x ...))
+(define-syntax-rule (leave-from g x ...) 
+  (g ref-g abort-to-prompt leave-exit x ...))
 
+;; CONSUME
 (define-syntax consume 
   (syntax-rules ()
     ((_ v)   (begin
@@ -203,6 +225,7 @@
 
     ((_) (g ref-g abort-to-prompt consume-exit))))
 
+;; TRANSIT
 (define-syntax transit-from 
   (syntax-rules ()
     ((g (v) data ...)
@@ -265,10 +288,16 @@
 				     (error "return-stack is empty")))))
 
 			     (yield-exit 
+			      (x   (coroutine-reset) (apply values x)))
+
+			     (leave-exit 
 			      (x   (coroutine-cont) (apply values x)))
 			     
 			     (continue-exit
 			      ((g . l) (coroutine-cont) (apply g  l)))
+
+			     (continue-sub-exit
+			      ((g . l) (coroutine-reset) (apply g  l)))
 
 			     (consume-exit
 			      (()  (coroutine-cont) (if #f #f)))
