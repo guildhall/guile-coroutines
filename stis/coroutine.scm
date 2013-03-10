@@ -1,4 +1,5 @@
 (define-module (stis coroutine)
+  #:use-module (compat cl symbol-property)
   #:use-module (ice-9 match)
   #:export (with-coroutines-raw 
 	    with-coroutines
@@ -116,15 +117,14 @@
 (define-syntax-rule (coroutine-keep)  (if #f #f))
 
 (define ref-g  #f)
-(define ret-g  #f)
 (define ref-gg #f)
-(define-syntax-rule (with-g ((g tag stack) ...) code ...)
+(define-syntax-rule (with-g ((g tag) ...) code ...)
   (let-syntax ((g (lambda (x)
-		    (syntax-case x (ref-g)
+		    (syntax-case x (ref-g ref-gg)
 		      ((_ ref-g abort kind . l)
-		       #'(abort tag kind g . l))
+		       #'(REGISTER-EXIT abort tag kind g . l))
 		      ((_ ref-gg g abort kind . l)
-		       #'(abort tag kind g . l))
+		       #'(REGISTER-EXIT abort tag kind g . l))
 		      (x (identifier? #'x) 
 			 #'g)))) ...)
     code ...))
@@ -148,7 +148,7 @@
 			   (call-with-prompt tag
 			       (lambda () (apply th a))
 			       (lambda (k q . args)
-				 (cond 
+				 (exit-cond 
 				  ((eq? q exit) 
 				   (with (init th k)
 					 (match args 
@@ -161,9 +161,9 @@
   (lambda (x)
     (syntax-case x ()
       ((_ nm)
-       (with-syntax ((s (datum->syntax #'1 (gensym "exit"))))
-	  #'(define-syntax nm
-	      (lambda (x) #''s)))))))
+       (let ((v (gensym "exit")))
+	 (with-syntax ((s (datum->syntax #'1 v)))	   
+	  #'(define-syntax nm (lambda (x) #''s))))))))
 
 (mk-exit goto-exit)
 (mk-exit gosub-exit)
@@ -179,8 +179,29 @@
 (mk-exit transit-exit)
 (mk-exit gosub-s-exit)
 (mk-exit gosub-s-exit)
-(mk-exit coninue-sub-s-exit)
+(mk-exit continue-sub-s-exit)
 
+(define-syntax-rule (REGISTER-EXIT abort tag kind . l)
+  (let-syntax ((f
+		(lambda (x)
+		  (let ((r (get tag kind)))
+		    (if r
+			(put tag kind (+ r 1))
+			(put tag kind 1)))
+		  #f)))
+	      
+    f (abort tag kind . l)))
+
+(define-syntax exit-cond
+  (lambda (x)
+    (syntax-case x ()
+      ((_ ((eq? u s) . l) ...)
+       (with-syntax (((value ...) (generate-temporaries #'(s ...))))
+	 #'(let-syntax ((value (lambda (x) (get TAG s))) ...)
+	     (cond
+	      ((and value (eq? u s)) . l)
+	      ...)))))))
+     
 ;; GOTO
 (define-syntax-rule (goto g . l)      
   (g ref-g abort-to-prompt goto-exit . l))
@@ -214,30 +235,34 @@
   (h ref-gg g abort-to-prompt continue-sub-s-exit s . l))
 
 ;; RETURN
-(define-syntax-rule (return . l)  (abort-to-prompt TAG return-exit . l))
+(define-syntax-rule (return . l)  
+  (REGISTER-EXIT abort-to-prompt TAG return-exit . l))
 (define-syntax-rule (return-from g . l)  
   (g ref-g abort-to-prompt TAG return-from-exit . l))
 
-(define-syntax-rule (resume      . l)  (abort-to-prompt TAG resume-exit . l))
+(define-syntax-rule (resume      . l)  
+  (REGISTER-EXIT abort-to-prompt TAG resume-exit . l))
 (define-syntax-rule (resume-from g . l)  
   (g ref-g abort-to-prompt resume-exit . l))
 
 (define-syntax-rule (return-s (s) . l)  
-  (abort-to-prompt TAG return-s-exit s . l))
+  (REGISTER-EXIT abort-to-prompt TAG return-s-exit s . l))
 (define-syntax-rule (return-from-s (s) g . l)  
   (g ref-g abort-to-prompt TAG return-from-s-exit s . l))
 
 (define-syntax-rule (resume-s (s) . l)  
-  (abort-to-prompt TAG resume-s-exit s . l))
+  (REGISTER-EXIT abort-to-prompt TAG resume-s-exit s . l))
 (define-syntax-rule (resume-from-s (s) g . l)  
   (g ref-g abort-to-prompt resume-s-exit s . l))
 
 ;; YIELD
-(define-syntax-rule (yield x ...) (abort-to-prompt TAG yield-exit x ...))
+(define-syntax-rule (yield x ...) 
+  (REGISTER-EXIT abort-to-prompt TAG yield-exit x ...))
 (define-syntax-rule (yield-from g x ...) 
   (g ref-g abort-to-prompt yield-exit x ...))
 
-(define-syntax-rule (leave x ...) (abort-to-prompt TAG leave-exit x ...))
+(define-syntax-rule (leave x ...) 
+  (REGISTER-EXIT abort-to-prompt TAG leave-exit x ...))
 (define-syntax-rule (leave-from g x ...) 
   (g ref-g abort-to-prompt leave-exit x ...))
 
@@ -246,7 +271,7 @@
   (syntax-rules ()
     ((_ v)   (begin
 	       (when (not (pair? v)) 
-		     (set! v (abort-to-prompt TAG consume-exit)))
+		     (set! v (REGISTER-EXIT abort-to-prompt TAG consume-exit)))
 	       (let ((r (car v)))
 		 (set! v (cdr v))
 		 r)))
@@ -282,7 +307,8 @@
   (syntax-rules ()
     (((v) data ...)
      (begin
-       (set! v (append v (abort-to-prompt TAG transit-exit data ...)))
+       (set! v (append v (REGISTER-EXIT 
+			  abort-to-prompt TAG transit-exit data ...)))
        (let ((r (car v)))
 	 (set! v (cdr v))
 	 r)))
@@ -368,10 +394,10 @@
 				     (error "return-stack is empty")))))
 
 			     (yield-exit 
-			      (x   (coroutine-reset) (apply values x)))
+			      (x   (coroutine-cont) (apply values x)))
 
 			     (leave-exit 
-			      (x   (coroutine-cont) (apply values x)))
+			      (x   (coroutine-reset) (apply values x)))
 			     
 			     (continue-exit
 			      ((g . l) (coroutine-cont) (apply g  l)))

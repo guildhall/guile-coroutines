@@ -1,4 +1,6 @@
-Make sure to put this directory in guiles load path.
+* Make sure that guile-cl is installed, you may find it at
+   https://gitorious.org/guile-cl
+* Make sure to put this directory in guiles load path.
 
 then use the library by issueing
 
