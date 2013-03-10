@@ -9,12 +9,21 @@
 	    gosub
 	    gosub-from
 
+	    gosub-s
+	    gosub-from-s
+
 	    return
 	    return-from
 
+	    return-s
+	    return-from-s
+
 	    resume
 	    resume-from
-
+	    
+	    resume-s
+	    resume-from-s
+	    
 	    yield
 	    yield-from
 
@@ -27,6 +36,9 @@
 	    continue-sub
 	    continue-sub-from
 
+	    continue-sub-s
+	    continue-sub-from-s
+
 	    consume 	   
 	    consume-from
 
@@ -35,6 +47,7 @@
 
 	    feed
 	    with-feed
+	    with-return-stack
 
 	    define-coroutine
 	    define-coroutine-inited
@@ -103,8 +116,9 @@
 (define-syntax-rule (coroutine-keep)  (if #f #f))
 
 (define ref-g  #f)
+(define ret-g  #f)
 (define ref-gg #f)
-(define-syntax-rule (with-g ((g tag) ...) code ...)
+(define-syntax-rule (with-g ((g tag stack) ...) code ...)
   (let-syntax ((g (lambda (x)
 		    (syntax-case x (ref-g)
 		      ((_ ref-g abort kind . l)
@@ -154,13 +168,18 @@
 (mk-exit goto-exit)
 (mk-exit gosub-exit)
 (mk-exit return-exit)
+(mk-exit return-s-exit)
 (mk-exit resume-exit)
+(mk-exit resume-s-exit)
 (mk-exit yield-exit)
 (mk-exit leave-exit)
 (mk-exit continue-exit)
 (mk-exit continue-sub-exit)
 (mk-exit consume-exit)
 (mk-exit transit-exit)
+(mk-exit gosub-s-exit)
+(mk-exit gosub-s-exit)
+(mk-exit coninue-sub-s-exit)
 
 ;; GOTO
 (define-syntax-rule (goto g . l)      
@@ -179,10 +198,20 @@
 (define-syntax-rule (gosub-from h g . l)     
   (h ref-gg g abort-to-prompt gosub-exit . l))
 
+(define-syntax-rule (gosub-s (s) g . l)     
+  (g ref-g abort-to-prompt gosub-s-exit s . l))
+(define-syntax-rule (gosub-from-s (s) h g . l)     
+  (h ref-gg g abort-to-prompt gosub-s-exit s . l))
+
 (define-syntax-rule (continue-sub g . l)  
   (g ref-g abort-to-prompt continue-sub-exit . l))
 (define-syntax-rule (continue-sub-from h g . l)  
   (h ref-gg g abort-to-prompt continue-sub-exit . l))
+
+(define-syntax-rule (continue-sub-s (s) g . l)  
+  (g ref-g abort-to-prompt continue-sub-s-exit s . l))
+(define-syntax-rule (continue-sub-from-s h (s) g . l)  
+  (h ref-gg g abort-to-prompt continue-sub-s-exit s . l))
 
 ;; RETURN
 (define-syntax-rule (return . l)  (abort-to-prompt TAG return-exit . l))
@@ -192,6 +221,16 @@
 (define-syntax-rule (resume      . l)  (abort-to-prompt TAG resume-exit . l))
 (define-syntax-rule (resume-from g . l)  
   (g ref-g abort-to-prompt resume-exit . l))
+
+(define-syntax-rule (return-s (s) . l)  
+  (abort-to-prompt TAG return-s-exit s . l))
+(define-syntax-rule (return-from-s (s) g . l)  
+  (g ref-g abort-to-prompt TAG return-from-s-exit s . l))
+
+(define-syntax-rule (resume-s (s) . l)  
+  (abort-to-prompt TAG resume-s-exit s . l))
+(define-syntax-rule (resume-from-s (s) g . l)  
+  (g ref-g abort-to-prompt resume-s-exit s . l))
 
 ;; YIELD
 (define-syntax-rule (yield x ...) (abort-to-prompt TAG yield-exit x ...))
@@ -266,6 +305,17 @@
 					(apply nm x)) 
 				      RET))
 			       (apply g l)))
+
+			     (gosub-s-exit
+			      ((g RET . l)
+			       (coroutine-reset)
+			       (set! RET
+				     (cons
+				      (lambda x 
+					(set! THUNK K)
+					(apply nm x)) 
+				      RET))
+			       (apply g l)))
 			     
 			     (return-exit
 			      (x 
@@ -277,8 +327,38 @@
 				       (apply g x))
 				     (error "return-stack is empty")))))
 
+			     (resume-exit
+			      (x 
+			       (coroutine-cont)
+			       (let ((gs RET))
+				 (if (pair? gs)
+				     (let ((g (car gs)))
+				       (set! RET (cdr gs))
+				       (apply g x))
+				     (error "return-stack is empty")))))
+
+			     (resume-s-exit
+			      ((RET . x)
+			       (coroutine-cont)
+			       (let ((gs RET))
+				 (if (pair? gs)
+				     (let ((g (car gs)))
+				       (set! RET (cdr gs))
+				       (apply g x))
+				     (error "return-stack is empty")))))
+
 			     (return-exit
 			      (x 
+			       (coroutine-cont)
+			       (let ((gs RET))
+				 (if (pair? gs)
+				     (let ((g (car gs)))
+				       (set! RET (cdr gs))
+				       (apply g x))
+				     (error "return-stack is empty")))))
+
+			     (return-s-exit
+			      ((RET . x)
 			       (coroutine-cont)
 			       (let ((gs RET))
 				 (if (pair? gs)
@@ -297,7 +377,26 @@
 			      ((g . l) (coroutine-cont) (apply g  l)))
 
 			     (continue-sub-exit
-			      ((g . l) (coroutine-reset) (apply g  l)))
+			      ((g . l)
+			       (coroutine-cont)
+			       (set! RET
+				     (cons
+				      (lambda x 
+					(set! THUNK K)
+					(apply nm x)) 
+				      RET))
+			       (apply g l)))
+
+			     (continue-sub-s-exit
+			      ((g RET . l)
+			       (coroutine-cont)
+			       (set! RET
+				     (cons
+				      (lambda x 
+					(set! THUNK K)
+					(apply nm x)) 
+				      RET))
+			       (apply g l)))
 
 			     (consume-exit
 			      (()  (coroutine-cont) (if #f #f)))
@@ -309,6 +408,7 @@
 
 (define-syntax-rule (feed g x ...) (g (list x ...)))
 (define-syntax-rule (with-feed (q) code ...) (let ((q '())) code ...))
+(define-syntax-rule (with-return-stack (q) code ...) (let ((q '())) code ...))
 
 (define-syntax-rule (define-coroutine (name . args) code ...)
   (define name
