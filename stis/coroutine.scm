@@ -2,6 +2,7 @@
   #:use-module (ice-9 match)
   #:export (with-coroutines-raw 
 	    with-coroutines
+	    
 	    goto
 	    goto-from
 
@@ -31,6 +32,7 @@
 
 	    define-coroutine
 	    define-coroutine-inited
+	    
 	    tagbody))
 
 
@@ -94,11 +96,14 @@
 (define-syntax-rule (coroutine-cont)  (set! THUNK K))
 (define-syntax-rule (coroutine-keep)  (if #f #f))
 
-(define ref-g #f)
+(define ref-g  #f)
+(define ref-gg #f)
 (define-syntax-rule (with-g ((g tag) ...) code ...)
   (let-syntax ((g (lambda (x)
 		    (syntax-case x (ref-g)
 		      ((_ ref-g abort kind . l)
+		       #'(abort tag kind g . l))
+		      ((_ ref-gg g abort kind . l)
 		       #'(abort tag kind g . l))
 		      (x (identifier? #'x) 
 			 #'g)))) ...)
@@ -149,8 +154,15 @@
 (mk-exit consume-exit)
 (mk-exit transit-exit)
 
-(define-syntax-rule (goto g)      (g ref-g abort-to-prompt goto-exit))
-(define-syntax-rule (gosub g)     (g ref-g abort-to-prompt gosub-exit))
+(define-syntax-rule (goto g . l)      
+  (g ref-g abort-to-prompt goto-exit . l))
+(define-syntax-rule (goto-from h g . l)      
+  (h ref-gg g abort-to-prompt goto-exit . l))
+
+(define-syntax-rule (gosub g)     
+  (g ref-g abort-to-prompt gosub-exit))
+(define-syntax-rule (gosub-from h g)     
+  (h ref-gg g abort-to-prompt gosub-exit))
 
 (define-syntax-rule (return . l)  (abort-to-prompt TAG return-exit . l))
 (define-syntax-rule (return-from g . l)  
@@ -164,7 +176,10 @@
 (define-syntax-rule (yield-from g x ...) 
   (g ref-g abort-to-prompt yield-exit x ...))
 
-(define-syntax-rule (continue g)  (g ref-g abort-to-prompt continue-exit))
+(define-syntax-rule (continue g . l)  
+  (g ref-g abort-to-prompt continue-exit . l))
+(define-syntax-rule (continue-from h g . l)  
+  (h ref-gg h abort-to-prompt continue-exit . l))
 
 (define-syntax consume 
   (syntax-rules ()
@@ -216,10 +231,10 @@
   (with-ret
   (with-coroutines-raw ((nm thunk
 			    ((goto-exit  
-			      ((g) (coroutine-reset) (g)))
+			      ((g . l) (coroutine-reset) (apply g l)))
 			     
 			     (gosub-exit
-			      ((g)
+			      ((g . l)
 			       (coroutine-reset)
 			       (set! RET
 				     (cons
@@ -227,7 +242,7 @@
 					(set! THUNK K)
 					(apply nm x)) 
 				      RET))
-			       (g)))
+			       (apply g l)))
 			     
 			     (return-exit
 			      (x 
@@ -253,7 +268,7 @@
 			      (x   (coroutine-cont) (apply values x)))
 			     
 			     (continue-exit
-			      ((g) (coroutine-cont) (g)))
+			      ((g . l) (coroutine-cont) (apply g  l)))
 
 			     (consume-exit
 			      (()  (coroutine-cont) (if #f #f)))
@@ -281,10 +296,12 @@
 (define-syntax handle-tagbody
   (syntax-rules ()
     ((_ start (x ...) (a l ...) (b . u) . v)
-     (handle-tagbody start (x ... (a (lambda () l ... (goto b)))) (b . u) . v))
+     (handle-tagbody start (x ... (a (lambda () 
+				       (if #f #f) l ... (goto b)))) 
+		     (b . u) . v))
 
     ((_ start (x ...) (a . l))
-     (with-coroutines (x ...  (a (lambda () . l)))
+     (with-coroutines (x ...  (a (lambda () (if #f #f) . l)))
        (start)))))
      
 (define-syntax tagbody 
