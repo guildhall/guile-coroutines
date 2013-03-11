@@ -1,6 +1,7 @@
 (define-module (stis coroutine)
   #:use-module (compat cl symbol-property)
   #:use-module (ice-9 match)
+  #:use-module (srfi srfi-1)
   #:export (with-coroutines-raw 
 	    with-coroutines
 	    
@@ -55,6 +56,8 @@
 	    
 	    tagbody))
 
+(define (union x y)
+  (lset-union equal? x y))
 
 (define-syntax-parameter RET
   (lambda (x) 
@@ -110,7 +113,25 @@
 
 (define-syntax-rule (with-tag tag code ...)
   (syntax-parameterize ((TAG (lambda x #'tag)))
-    code ...))
+    (let-syntax ((f (lambda (x)
+		      (put TAG goto-exit #f)
+		      (put TAG gosub-exit #f)
+		      (put TAG return-exit #f)
+		      (put TAG return-s-exit #f)
+		      (put TAG resume-exit #f)
+		      (put TAG resume-s-exit #f)
+		      (put TAG yield-exit #f)
+		      (put TAG leave-exit #f)
+		      (put TAG continue-exit #f)
+		      (put TAG continue-sub-exit #f)
+		      (put TAG consume-exit #f)
+		      (put TAG transit-exit #f)
+		      (put TAG gosub-s-exit #f)
+		      (put TAG gosub-s-exit #f)
+		      (put TAG continue-sub-s-exit #f)
+		      (put TAG 'seen '())
+		      #f)))
+      f code ...)))
 
 (define-syntax-rule (coroutine-reset) (set! THUNK TH-INIT))
 (define-syntax-rule (coroutine-cont)  (set! THUNK K))
@@ -161,9 +182,9 @@
   (lambda (x)
     (syntax-case x ()
       ((_ nm)
-       (let ((v (gensym "exit")))
-	 (with-syntax ((s (datum->syntax #'1 v)))	   
-	  #'(define-syntax nm (lambda (x) #''s))))))))
+       (let ((v (gensym (format #f "~a-exit" (syntax->datum #'nm)))))
+	 (with-syntax ((s (datum->syntax #'1 v)))
+	    #'(define-syntax nm (lambda (x) #''s))))))))
 
 (mk-exit goto-exit)
 (mk-exit gosub-exit)
@@ -181,26 +202,44 @@
 (mk-exit gosub-s-exit)
 (mk-exit continue-sub-s-exit)
 
-(define-syntax-rule (REGISTER-EXIT abort tag kind . l)
+(define-syntax-rule (REGISTER-EXIT abort tag kind l ...)
   (let-syntax ((f
 		(lambda (x)
 		  (let ((r (get tag kind)))
+		    (put tag 'seen (union (get tag 'seen '()) (list kind)))
 		    (if r
-			(put tag kind (+ r 1))
-			(put tag kind 1)))
+			(put tag kind (max (length (list 'l ...)) r))
+			(put tag kind (length (list 'l ...)))))
 		  #f)))
 	      
-    f (abort tag kind . l)))
+    f (abort tag kind l ...)))
 
 (define-syntax exit-cond
   (lambda (x)
     (syntax-case x ()
       ((_ ((eq? u s) . l) ...)
-       (with-syntax (((value ...) (generate-temporaries #'(s ...))))
-	 #'(let-syntax ((value (lambda (x) (get TAG s))) ...)
-	     (cond
-	      ((and value (eq? u s)) . l)
-	      ...)))))))
+       (with-syntax (((row ...) (generate-temporaries #'(s ...))))
+	 #'(let-syntax ((row (lambda (x) 
+			       (syntax-case x ()
+				 ((_ r rs (... ...))
+				  (if (get TAG s)
+				      (if (= (length (get TAG 'seen)) 1)
+					  (if (get TAG goto-exit) 
+					      (syntax-case #'l (with match)
+						(((with _ (match x (p n v))))
+						 #'(match x (p v))))
+					      #'(begin . l))
+					  #'(if (eq? u s)
+						(begin . l)
+						(r rs (... ...))))
+				      #'(r rs (... ...))))
+				 ((_)
+				  (if (get TAG s)
+				      #'(if (eq? u s) 
+					    (begin . l))
+				      #'(if #f #f))))))
+			...)
+	     (row ...)))))))
      
 ;; GOTO
 (define-syntax-rule (goto g . l)      

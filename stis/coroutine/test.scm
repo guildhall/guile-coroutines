@@ -63,6 +63,20 @@
  (d:
   (pk 'leave-at-d)))
 
+(define (f)
+  (tagbody
+   (a:
+    (goto c:))
+
+   (b:
+    (goto d:))
+
+   (c:
+    (goto b:))
+
+   (d:
+    (pk 'end))))
+
 ;; But spiced with a gosub! yeah basic here we come!
 (tagbody
  (a:
@@ -80,5 +94,3 @@
 
  (d:
   (pk 'leave-at-d)))
-     
-
