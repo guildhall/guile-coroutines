@@ -1,6 +1,7 @@
 (define-module (stis coroutine)
   #:use-module (compat cl symbol-property)
   #:use-module (ice-9 match)
+  #:use-module (syntax parse)
   #:use-module (srfi srfi-1)
   #:export (with-coroutines-raw 
 	    with-coroutines
@@ -132,14 +133,21 @@
 			 #'g)))) ...)
     code ...))
  
+(define-syntax-class thk  
+  (pattern ((~literal lambda) (a:id ...) code ...)
+      #:with args  #'(a ...)
+      #:with apply #'(list a ...))
+  (pattern _
+      #:with args  (datum->syntax #'1 (gensym "arg"))
+      #:with apply #'args))
+
 (define-syntax with-coroutines-raw
   (lambda (x)
-    (syntax-case x (/.)
-      ((_ ((nm thunk 
-	       ((exit (pat transition-code ...) ...) ...))
+    (syntax-parse x
+      ((_ ((nm thunk:thk
+	       ((exit (pat . transition-code) ...) ...))
 	   ...)
 	  code ...)
-       
        #`(letrec ((nm  (let* ((tag (make-prompt-tag))
 			      (th    
 			       (with-tag tag 
@@ -147,18 +155,19 @@
 						#'(nm ...))
 				    thunk)))
 			      (init th))
-			 (lambda a
+			 (lambda thunk.args
 			   (call-with-prompt tag
-			       (lambda () (apply th a))
+			       (lambda () (apply th thunk.apply))
 			       (lambda (k q . args)
 				 (exit-cond 
 				  ((eq? q exit) 
 				   (with (init th k)
 					 (match args 
-						(pat transition-code ...) ...)))
+						(pat . transition-code) ...)))
 				  ...))))))
 		  ...)
 	   code ...)))))
+
 
 (define-syntax mk-exit
   (lambda (x)
