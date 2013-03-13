@@ -113,7 +113,10 @@
      code ...))
 
 (define-syntax-rule (with-tag tag code ...)
-  (syntax-parameterize ((TAG (lambda x #'tag)))
+  (syntax-parameterize ((TAG (lambda (x)
+			       (syntax-case x ()
+				 ((_ (g . l)) #'(g tag . l))
+				 (_ #'tag)))))
      code ...))
 
 (define-syntax-rule (coroutine-reset) (set! THUNK TH-INIT))
@@ -122,13 +125,13 @@
 
 (define ref-g  #f)
 (define ref-gg #f)
-(define-syntax-rule (with-g ((g tag) ...) code ...)
+(define-syntax-rule (with-g (g ...) code ...)
   (let-syntax ((g (lambda (x)
 		    (syntax-case x (ref-g ref-gg)
 		      ((_ ref-g abort kind . l)
-		       #'(REGISTER-EXIT abort tag kind g . l))
+		       #'(TAG (REGISTER-EXIT abort kind g . l)))
 		      ((_ ref-gg g abort kind . l)
-		       #'(REGISTER-EXIT abort tag kind g . l))
+		       #'(TAG (REGISTER-EXIT abort kind g . l)))
 		      (x (identifier? #'x) 
 			 #'g)))) ...)
     code ...))
@@ -148,13 +151,12 @@
 	       ((exit (pat . transition-code) ...) ...))
 	   ...)
 	  code ...)
-       #`(letrec ((nm  (let* ((tag (make-prompt-tag))
-			      (th    
-			       (with-tag tag 
-				 (with-g #,(map (lambda (nm) #`(#,nm tag))
-						#'(nm ...))
-				    thunk)))
-			      (init th))
+       (with-syntax ((tag (datum->syntax #'1 (gensym "tag"))))
+       #`(letrec ((nm (let* ((tag (make-prompt-tag)))
+			(with-tag tag
+			  (let* ((th    
+				  (with-g (nm ...) thunk))
+				 (init th))
 			 (lambda thunk.args
 			   (call-with-prompt tag
 			       (lambda () (apply th thunk.apply))
@@ -162,11 +164,11 @@
 				 (exit-cond 
 				  ((eq? q exit) 
 				   (with (init th k)
-					 (match args 
-						(pat . transition-code) ...)))
-				  ...))))))
+				     (match args 
+				       (pat . transition-code) ...)))
+				  ...))))))))
 		  ...)
-	   code ...)))))
+	   code ...))))))
 
 
 (define-syntax mk-exit
@@ -193,16 +195,14 @@
 (mk-exit gosub-s-exit)
 (mk-exit continue-sub-s-exit)
 
-(define-syntax-rule (REGISTER-EXIT abort tag kind l ...)
-  (let-syntax ((f
-		(lambda (x)
-		  (let ((r (get tag kind)))
-		    (put tag 'seen (union (get tag 'seen '()) (list kind)))
-		    (if r
-			(put tag kind (max (length (list 'l ...)) r))
-			(put tag kind (length (list 'l ...)))))
-		  #f)))
-	      
+(define-syntax-rule (REGISTER-EXIT tag abort kind l ...)
+  (let-syntax ((f (lambda (x)
+		    (let ((r (get tag kind)))
+		      (put tag 'seen (union (get tag 'seen '()) (list kind)))
+		      (if r
+			  (put tag kind (max (length (list 'l ...)) r))
+			  (put tag kind (length (list 'l ...)))))
+		    #f)))
     f (abort tag kind l ...)))
 
 (define-syntax exit-cond
@@ -210,12 +210,13 @@
     (syntax-case x ()
       ((_ ((eq? u s) . l) ...)
        (with-syntax (((row ...) (generate-temporaries #'(s ...))))
+	      
 	 #'(let-syntax ((row (lambda (x) 
 			       (syntax-case x ()
 				 ((_ r rs (... ...))
-				  (if (get TAG s)
-				      (if (= (length (get TAG 'seen)) 1)
-					  (if (get TAG goto-exit) 
+				  (if (TAG (get s))
+				      (if (= (length (TAG (get 'seen))) 1)
+					  (if (TAG (get goto-exit))
 					      (syntax-case #'l (with match)
 						(((with _ (match x (p n v))))
 						 #'(match x (p v))))
@@ -225,7 +226,7 @@
 						(r rs (... ...))))
 				      #'(r rs (... ...))))
 				 ((_)
-				  (if (get TAG s)
+				  (if (TAG (get s))
 				      #'(if (eq? u s) 
 					    (begin . l))
 				      #'(if #f #f))))))
@@ -266,33 +267,33 @@
 
 ;; RETURN
 (define-syntax-rule (return . l)  
-  (REGISTER-EXIT abort-to-prompt TAG return-exit . l))
+  (TAG (REGISTER-EXIT abort-to-prompt return-exit . l)))
 (define-syntax-rule (return-from g . l)  
   (g ref-g abort-to-prompt TAG return-from-exit . l))
 
 (define-syntax-rule (resume      . l)  
-  (REGISTER-EXIT abort-to-prompt TAG resume-exit . l))
+  (TAG (REGISTER-EXIT abort-to-prompt resume-exit . l)))
 (define-syntax-rule (resume-from g . l)  
   (g ref-g abort-to-prompt resume-exit . l))
 
 (define-syntax-rule (return-s (s) . l)  
-  (REGISTER-EXIT abort-to-prompt TAG return-s-exit s . l))
+  (TAG (REGISTER-EXIT abort-to-prompt return-s-exit s . l)))
 (define-syntax-rule (return-from-s (s) g . l)  
   (g ref-g abort-to-prompt TAG return-from-s-exit s . l))
 
 (define-syntax-rule (resume-s (s) . l)  
-  (REGISTER-EXIT abort-to-prompt TAG resume-s-exit s . l))
+  (TAG (REGISTER-EXIT abort-to-prompt resume-s-exit s . l)))
 (define-syntax-rule (resume-from-s (s) g . l)  
   (g ref-g abort-to-prompt resume-s-exit s . l))
 
 ;; YIELD
 (define-syntax-rule (yield x ...) 
-  (REGISTER-EXIT abort-to-prompt TAG yield-exit x ...))
+  (TAG (REGISTER-EXIT abort-to-prompt yield-exit x ...)))
 (define-syntax-rule (yield-from g x ...) 
   (g ref-g abort-to-prompt yield-exit x ...))
 
 (define-syntax-rule (leave x ...) 
-  (REGISTER-EXIT abort-to-prompt TAG leave-exit x ...))
+  (TAG (REGISTER-EXIT abort-to-prompt leave-exit x ...)))
 (define-syntax-rule (leave-from g x ...) 
   (g ref-g abort-to-prompt leave-exit x ...))
 
@@ -301,7 +302,8 @@
   (syntax-rules ()
     ((_ v)   (begin
 	       (when (not (pair? v)) 
-		     (set! v (REGISTER-EXIT abort-to-prompt TAG consume-exit)))
+		     (set! v (TAG 
+			      (REGISTER-EXIT abort-to-prompt consume-exit))))
 	       (let ((r (car v)))
 		 (set! v (cdr v))
 		 r)))
@@ -475,7 +477,7 @@
 (define-syntax-rule (define-coroutine-inited (name . args) code ...)
   (define name
     (lambda args
-      (with-coroutines ((it (lambda () code ...)))
+      (with-coroutines ((it (lambda x code ...)))
 	(it) it))))
 
 (define-syntax handle-tagbody
